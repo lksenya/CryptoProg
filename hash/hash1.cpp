@@ -2,7 +2,6 @@
 #include <cryptopp/sha.h>
 #include <cryptopp/hex.h>
 #include <cryptopp/filters.h>
-
 int main() {
     CryptoPP::SHA256 hash;
     std::string message = "Проверка хеширования";
