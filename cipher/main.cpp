@@ -1,46 +1,114 @@
 #include <iostream>
-#include <cctype>
-#include <locale>
-#include "modalphacipher.h"
-#include <codecvt>
-#include <typeinfo>
-
-using namespace std;
-
-void check(const wstring& Text, const wstring& key, const bool destructCipherText=false)
-{
-    try {
-        wstring cipherText;
-        wstring decryptedText;
-        modalphacipher cipher(key);
-        cipherText = cipher.encrypt(Text); // зашифровывание
-        if (destructCipherText) // надо "портить"?
-            cipherText.front() = tolower(cipherText.front()); // "портим"
-        decryptedText = cipher.decrypt(cipherText); // расшифровывание
-        wcout<<L"key="<<key<<endl;
-        wcout<<Text<<endl;
-        wcout<<cipherText<<endl;
-        wcout<<decryptedText<<endl;
-    } catch (const cipher_error & e) {
-        wcerr<<"Error: "<<e.what()<<endl;
+#include <cryptopp/hex.h>
+#include <cryptopp/files.h>
+#include <cryptopp/aes.h>
+#include <cryptopp/modes.h>
+#include <cryptopp/osrng.h>
+#include <cryptopp/pwdbased.h>
+#include <cstring>
+#include <fstream>
+void encrypt(std::string keystr,const char * orig_file,const char * encr_file,const char * iv_file){
+    try{
+    CryptoPP::SHA256 hash;
+    CryptoPP::SecByteBlock key(CryptoPP::AES::DEFAULT_KEYLENGTH);
+    CryptoPP::PKCS12_PBKDF<CryptoPP::SHA256> pbkdf;
+    pbkdf.DeriveKey(key,key.size(),0,reinterpret_cast<const CryptoPP::byte*>(keystr.data()),keystr.size(),nullptr,0,1000,0.0f);
+    CryptoPP::AutoSeededRandomPool prng;
+    memcpy(key,keystr.c_str(),CryptoPP::AES::DEFAULT_KEYLENGTH);
+    CryptoPP::SecByteBlock iv(CryptoPP::AES::BLOCKSIZE);
+    prng.GenerateBlock(iv, iv.size());
+    CryptoPP::StringSource(iv, iv.size(), true,
+                            new CryptoPP::HexEncoder(
+                                new CryptoPP::FileSink(iv_file)));
+    std::clog << "IV generated and stored to file " << iv_file << std::endl;
+    CryptoPP::CBC_Mode<CryptoPP::AES>::Encryption encr;
+    encr.SetKeyWithIV( key, key.size(), iv );
+    CryptoPP::FileSource (orig_file, true,
+                            new CryptoPP::StreamTransformationFilter(encr,
+                                    new CryptoPP::FileSink(encr_file)));
+    std::clog << "File " << orig_file << " encrypted and stored to " << encr_file << std::endl;
+    }
+    catch( const CryptoPP::Exception& e ) {
+        std::cerr << e.what() << std::endl;
+        exit(1);
     }
 }
-
-// проверка, чтобы строка состояла только из прописных букв
-bool isValid(const wstring& s)
-{
-    for(auto c:s)
-        if (!iswalpha(c) || !iswupper(c))
-            return false;
-    return true;
+void decrypt(std::string keystr,const char * encr_file,const char * decr_file,const char * iv_file){
+    try{
+    CryptoPP::SecByteBlock key(CryptoPP::AES::DEFAULT_KEYLENGTH);
+    CryptoPP::SHA256 hash;
+    CryptoPP::PKCS12_PBKDF<CryptoPP::SHA256> pbkdf;
+    pbkdf.DeriveKey(key,key.size(),0,reinterpret_cast<const CryptoPP::byte*>(keystr.data()),keystr.size(),nullptr,0,1000,0.0f);
+    CryptoPP::SecByteBlock iv(CryptoPP::AES::BLOCKSIZE);
+    CryptoPP::FileSource(iv_file, true,
+                            new CryptoPP::HexDecoder(
+                                new CryptoPP::ArraySink(iv, iv.size())));
+    std::clog << "IV readed from file " << iv_file << std::endl;
+    CryptoPP::CBC_Mode<CryptoPP::AES>::Decryption decr;
+    decr.SetKeyWithIV(key, key.size(), iv);
+    CryptoPP::FileSource (encr_file, true, 
+                            new CryptoPP::StreamTransformationFilter(decr,
+                                    new CryptoPP::FileSink(decr_file)));
+    std::clog << "File " << encr_file << " decrypted and stored to " << decr_file << std::endl;
+    }
+    catch( const CryptoPP::Exception& e ) {
+        std::cerr << e.what() << std::endl;
+        exit(1);
+    }
 }
-int main()
-{
-    locale loc("ru_RU.UTF-8");
-    locale::global(loc);
-    check(L"ПРИВЕТ",L"ПРОЩАЙ");
-    check(L"ПРОЩАЙ",L"");
-    check(L"ПРОЩАЙ",L"ПРИВЕТ321");
-    check(L"П Р О Щ А Й",L"ПРИВЕТ");
-    check(L"321",L"ПРИВЕТ");
+int main() {
+    CryptoPP::HexEncoder(new CryptoPP::FileSink(std::cout));
+    while (true){
+    std::string type;
+    std::cout<<"Выберите тип оперцации: en - шифрование, de - расшифрование, 0 - завершение программы"<<std::endl;
+    std::cin>>type;
+    if(type=="en"){
+        std::string key;
+        std::cout<<"Введите ключ"<<std::endl;
+        std::cin>>key;
+
+        std::string orig_file;
+        std::cout<<"Введите путь к файлу для шифрования"<<std::endl;
+        std::cin>>orig_file;
+
+        std::string en_file;
+        std::cout<<"Введите путь для файла с результом шифрования"<<std::endl;
+        std::cin>>en_file;
+
+        std::string iv_file;
+        std::cout<<"Введите путь файла для хранения IV"<<std::endl;
+        std::cin>>iv_file;
+
+        encrypt(key,orig_file.c_str(),en_file.c_str(),iv_file.c_str());
+
+    }
+    else if(type == "de"){
+        std::string key;
+        std::cout<<"Введите ключ"<<std::endl;
+        std::cin>>key;
+
+        std::string enc_file;
+        std::cout<<"Введите путь к файлу для расшифрования"<<std::endl;
+        std::cin>>enc_file;
+
+        std::string dec_file;
+        std::cout<<"Введите путь для файла с результом расшифрования"<<std::endl;
+        std::cin>>dec_file;
+
+        std::string iv_file;
+        std::cout<<"Введите путь файла для хранения IV"<<std::endl;
+        std::cin>>iv_file;
+
+        decrypt(key,enc_file.c_str(),dec_file.c_str(),iv_file.c_str());
+    }
+    else if(type=="0"){
+        std::cout<<"Завершение работы программы"<<std::endl;
+        return 0;
+    }
+    else{
+        std::cout<<"Неверный тип операции"<<std::endl;
+        return 0;
+        }
+    }
+    return 0;
 }
