@@ -1,23 +1,19 @@
 .PHONY: all clean
-# Имя компилятора
+
 CXX = g++
 
-# Флаги компилятора
+
 CXXFLAGS = -Wall -lcrypto++
 
-# Имя исполняемого файла
-TARGET = cipher
 
-# Исходные файлы
-SOURCES = main.cpp
+TARGET = hash
 
-# Объектные файлы
+
+SOURCES = hash.cpp
+
+
 OBJECTS = $(SOURCES:.cpp=.o)
 
-# Зависимости на заголовочные файлы
-DEPS = base.h ui.h communicator.h logger.h
-
-# Цель по умолчанию
 all: $(TARGET)
 
 $(TARGET): $(OBJECTS)
