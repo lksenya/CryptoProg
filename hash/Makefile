@@ -9,7 +9,7 @@ CXXFLAGS = -Wall -lcrypto++
 TARGET = hash
 
 # Исходные файлы
-SOURCES = main.cpp
+SOURCES = hash.cpp
 
 # Объектные файлы
 OBJECTS = $(SOURCES:.cpp=.o)
