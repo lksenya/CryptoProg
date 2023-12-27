@@ -1,114 +1,87 @@
 #include <iostream>
-#include <cryptopp/hex.h>
-#include <cryptopp/files.h>
+#include <fstream>
+#include <string>
+#include <cryptopp/cryptlib.h>
 #include <cryptopp/aes.h>
 #include <cryptopp/modes.h>
-#include <cryptopp/osrng.h>
+#include <cryptopp/filters.h>
+#include <cryptopp/files.h>
+#include <cryptopp/sha.h>
+#include <cryptopp/hex.h>
 #include <cryptopp/pwdbased.h>
-#include <cstring>
-#include <fstream>
-void encrypt(std::string keystr,const char * orig_file,const char * encr_file,const char * iv_file){
-    try{
-    CryptoPP::SHA256 hash;
-    CryptoPP::SecByteBlock key(CryptoPP::AES::DEFAULT_KEYLENGTH);
-    CryptoPP::PKCS12_PBKDF<CryptoPP::SHA256> pbkdf;
-    pbkdf.DeriveKey(key,key.size(),0,reinterpret_cast<const CryptoPP::byte*>(keystr.data()),keystr.size(),nullptr,0,1000,0.0f);
-    CryptoPP::AutoSeededRandomPool prng;
-    memcpy(key,keystr.c_str(),CryptoPP::AES::DEFAULT_KEYLENGTH);
-    CryptoPP::SecByteBlock iv(CryptoPP::AES::BLOCKSIZE);
-    prng.GenerateBlock(iv, iv.size());
-    CryptoPP::StringSource(iv, iv.size(), true,
-                            new CryptoPP::HexEncoder(
-                                new CryptoPP::FileSink(iv_file)));
-    std::clog << "IV generated and stored to file " << iv_file << std::endl;
-    CryptoPP::CBC_Mode<CryptoPP::AES>::Encryption encr;
-    encr.SetKeyWithIV( key, key.size(), iv );
-    CryptoPP::FileSource (orig_file, true,
-                            new CryptoPP::StreamTransformationFilter(encr,
-                                    new CryptoPP::FileSink(encr_file)));
-    std::clog << "File " << orig_file << " encrypted and stored to " << encr_file << std::endl;
-    }
-    catch( const CryptoPP::Exception& e ) {
-        std::cerr << e.what() << std::endl;
-        exit(1);
-    }
+
+using namespace CryptoPP;
+
+// Функция для вычисления ключа из пароля
+SecByteBlock DeriveKey(const std::string& password)
+{
+    SecByteBlock derived(AES::DEFAULT_KEYLENGTH);
+    PKCS5_PBKDF2_HMAC<SHA256> pbkdf;
+    const byte* salt = (const byte*)"somesalt"; // Уникальная соль (лучше генерировать случайным образом)
+    size_t saltLen = 8; // Длина соли в байтах
+    pbkdf.DeriveKey(derived, derived.size(), 0, reinterpret_cast<const byte*>(password.data()), password.size(), salt, saltLen, 1000, 0.0);
+    return derived;
 }
-void decrypt(std::string keystr,const char * encr_file,const char * decr_file,const char * iv_file){
-    try{
-    CryptoPP::SecByteBlock key(CryptoPP::AES::DEFAULT_KEYLENGTH);
-    CryptoPP::SHA256 hash;
-    CryptoPP::PKCS12_PBKDF<CryptoPP::SHA256> pbkdf;
-    pbkdf.DeriveKey(key,key.size(),0,reinterpret_cast<const CryptoPP::byte*>(keystr.data()),keystr.size(),nullptr,0,1000,0.0f);
-    CryptoPP::SecByteBlock iv(CryptoPP::AES::BLOCKSIZE);
-    CryptoPP::FileSource(iv_file, true,
-                            new CryptoPP::HexDecoder(
-                                new CryptoPP::ArraySink(iv, iv.size())));
-    std::clog << "IV readed from file " << iv_file << std::endl;
-    CryptoPP::CBC_Mode<CryptoPP::AES>::Decryption decr;
-    decr.SetKeyWithIV(key, key.size(), iv);
-    CryptoPP::FileSource (encr_file, true, 
-                            new CryptoPP::StreamTransformationFilter(decr,
-                                    new CryptoPP::FileSink(decr_file)));
-    std::clog << "File " << encr_file << " decrypted and stored to " << decr_file << std::endl;
-    }
-    catch( const CryptoPP::Exception& e ) {
-        std::cerr << e.what() << std::endl;
-        exit(1);
-    }
-}
-int main() {
-    CryptoPP::HexEncoder(new CryptoPP::FileSink(std::cout));
-    while (true){
-    std::string type;
-    std::cout<<"Выберите тип оперцации: en - шифрование, de - расшифрование, 0 - завершение программы"<<std::endl;
-    std::cin>>type;
-    if(type=="en"){
-        std::string key;
-        std::cout<<"Введите ключ"<<std::endl;
-        std::cin>>key;
 
-        std::string orig_file;
-        std::cout<<"Введите путь к файлу для шифрования"<<std::endl;
-        std::cin>>orig_file;
+// Функция для обработки файла
+void ProcessFile(const std::string& inputFile, const std::string& outputFile, const std::string& password, bool encrypt)
+{
+    try {
+        std::ifstream in(inputFile, std::ios::binary);
+        std::ofstream out(outputFile, std::ios::binary);
 
-        std::string en_file;
-        std::cout<<"Введите путь для файла с результом шифрования"<<std::endl;
-        std::cin>>en_file;
+        SecByteBlock key = DeriveKey(password);
+        byte iv[AES::BLOCKSIZE];
+        memset(iv, 0x00, AES::BLOCKSIZE);
 
-        std::string iv_file;
-        std::cout<<"Введите путь файла для хранения IV"<<std::endl;
-        std::cin>>iv_file;
+        // Выбор режима шифрования или расшифрования
+        if (encrypt) {
+            CBC_Mode<AES>::Encryption enc;
+            enc.SetKeyWithIV(key, key.size(), iv);
 
-        encrypt(key,orig_file.c_str(),en_file.c_str(),iv_file.c_str());
+            // Шифрование файла
+            FileSource fileSrc(in, true, new StreamTransformationFilter(enc, new FileSink(out)));
+            fileSrc.PumpAll();
+            fileSrc.Flush(true);
+            std::cout << "Файл зашифрован" << std::endl;
+        }
+        else {
+            CBC_Mode<AES>::Decryption dec;
+            dec.SetKeyWithIV(key, key.size(), iv);
 
-    }
-    else if(type == "de"){
-        std::string key;
-        std::cout<<"Введите ключ"<<std::endl;
-        std::cin>>key;
-
-        std::string enc_file;
-        std::cout<<"Введите путь к файлу для расшифрования"<<std::endl;
-        std::cin>>enc_file;
-
-        std::string dec_file;
-        std::cout<<"Введите путь для файла с результом расшифрования"<<std::endl;
-        std::cin>>dec_file;
-
-        std::string iv_file;
-        std::cout<<"Введите путь файла для хранения IV"<<std::endl;
-        std::cin>>iv_file;
-
-        decrypt(key,enc_file.c_str(),dec_file.c_str(),iv_file.c_str());
-    }
-    else if(type=="0"){
-        std::cout<<"Завершение работы программы"<<std::endl;
-        return 0;
-    }
-    else{
-        std::cout<<"Неверный тип операции"<<std::endl;
-        return 0;
+            // Расшифрование файла
+            FileSource fileSrc(in, true, new StreamTransformationFilter(dec, new FileSink(out)));
+            fileSrc.PumpAll();
+            fileSrc.Flush(true);
+            std::cout << "Файл расшифрован" << std::endl;
         }
     }
+    catch (const Exception& ex) {
+        std::cerr << "Crypto++ исключение: " << ex.what() << std::endl;
+    }
+}
+
+int main()
+{
+    std::string inputFile, outputFile, password;
+    int sw;
+
+    // Выбор режима работы
+    std::cout << "Выберите тип оперцации: 1 - шифрование, 2 - расшифрование:   ";
+    std::cin >> sw;
+
+    // Ввод путей к файлам и пароля
+    std::cout << "Введите путь к входному файлу: ";
+    std::cin >> inputFile;
+
+    std::cout << "Введите путь к выходному файлу: ";
+    std::cin >> outputFile;
+
+    std::cout << "Введите пароль: ";
+    std::cin >> password;
+
+    bool encrypt = (sw == 1);
+    ProcessFile(inputFile, outputFile, password, encrypt);
+
     return 0;
 }
